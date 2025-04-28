@@ -83,14 +83,9 @@ jobs:
           mkdir -p ~/.local/share/danser/Replays
           mkdir -p ~/.local/share/danser/videos
           
-      - name: Setup Python for OSR parsing
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          
-      - name: Install OSR parsing dependencies
+      - name: Install Python dependencies
         run: |
-          pip install osrparse requests
+          pip3 install osrparse requests
 
       - name: Copy replay file and extract beatmap info
         env:
