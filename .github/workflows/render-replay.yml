@@ -397,7 +397,7 @@ jobs:
           EOL
           
           # Run the script to extract and download beatmap
-          python extract_beatmap.py ~/.local/share/danser/Replays/$REPLAY_FILENAME
+          python3 extract_beatmap.py ~/.local/share/danser/Replays/$REPLAY_FILENAME
       
       - name: Create default settings
         run: |
