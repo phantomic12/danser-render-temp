@@ -24,6 +24,7 @@ jobs:
       image: ubuntu:22.04
       env:
         DISPLAY: :1
+        HOME: /root
       volumes:
         - /:/host
         - /tmp/.X11-unix:/tmp/.X11-unix
@@ -89,6 +90,14 @@ jobs:
           
           # Test ALSA
           aplay -l || echo "ALSA test failed"
+          
+          # Set up home directory for danser
+          mkdir -p /root/.config/danser
+          mkdir -p /root/.local/share/danser/Songs
+          mkdir -p /root/.local/share/danser/Replays
+          mkdir -p /root/.local/share/danser/videos
+          chown -R root:root /root
+          chmod -R 755 /root
       
       - name: Setup Xvfb virtual display
         run: |
