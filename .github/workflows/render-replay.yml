@@ -23,7 +23,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
       - name: Install system dependencies
         run: |
@@ -120,7 +120,7 @@ jobs:
 
       - name: Checkout Firefox profile repository
         if: github.event.inputs.uploadDestination != 'discord'
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: ${{ secrets.FIREFOX_PROFILE_REPO }}
           token: ${{ secrets.FIREFOX_PROFILE_TOKEN }}
