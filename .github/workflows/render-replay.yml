@@ -115,9 +115,6 @@ jobs:
           }
           EOL
           
-          # Create a default skin directory
-          mkdir -p /root/.local/share/danser/Skins/default
-          
           # Start PulseAudio in system mode with proper flags
           pulseaudio --system --daemonize=yes --disallow-exit --disallow-module-loading=yes
           
@@ -147,11 +144,11 @@ jobs:
           mkdir -p danser
           cd danser
           
-          # Download file with proper extension
-          if [[ "$LATEST_RELEASE_URL" == *.zip ]]; then
+          # Download and extract based on file extension
+          if echo "$LATEST_RELEASE_URL" | grep -q "\.zip$"; then
             curl -L -o danser.zip "$LATEST_RELEASE_URL"
             unzip danser.zip
-          elif [[ "$LATEST_RELEASE_URL" == *.tar.gz ]]; then
+          elif echo "$LATEST_RELEASE_URL" | grep -q "\.tar\.gz$"; then
             curl -L -o danser.tar.gz "$LATEST_RELEASE_URL"
             tar -xzf danser.tar.gz
           else
@@ -166,9 +163,7 @@ jobs:
           
           # Make all possible executable files executable
           chmod +x danser* 2>/dev/null || true
-          
-          # Copy default skin assets
-          cp -r assets/default-skin/* /root/.local/share/danser/Skins/default/
+          chmod +x ffmpeg/* 2>/dev/null || true
       
       - name: Install Python dependencies
         run: |
