@@ -130,7 +130,7 @@ jobs:
         if: github.event.inputs.uploadDestination != 'discord'
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.13'
           
       - name: Install youtube-uploader-selenium
         if: github.event.inputs.uploadDestination != 'discord'
