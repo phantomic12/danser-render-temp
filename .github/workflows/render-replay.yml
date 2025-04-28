@@ -49,18 +49,46 @@ jobs:
           load-module module-pipe-source
           EOL
           
-          # Start PulseAudio in system mode with proper permissions
-          pulseaudio --system --daemonize=yes --disallow-exit --disallow-module-loading=no
+          # Create ALSA configuration
+          mkdir -p /etc/alsa/conf.d
+          cat > /etc/alsa/conf.d/99-pulse.conf << EOL
+          pcm.!default {
+            type pulse
+            fallback "sysdefault"
+            hint {
+              show on
+              description "Default ALSA Output (currently PulseAudio Sound Server)"
+            }
+          }
+          
+          ctl.!default {
+            type pulse
+            fallback "sysdefault"
+          }
+          EOL
+          
+          # Start PulseAudio in system mode with proper flags
+          pulseaudio --system --daemonize=yes --disallow-exit --disallow-module-loading=yes
+          
+          # Create dummy ALSA device if none exists
+          if [ ! -d /dev/snd ]; then
+            mkdir -p /dev/snd
+            mknod /dev/snd/controlC0 c 116 0
+            mknod /dev/snd/pcmC0D0p c 116 1
+            mknod /dev/snd/pcmC0D0c c 116 2
+            mknod /dev/snd/timer c 116 3
+            chmod 666 /dev/snd/*
+          fi
           
           # Add current user to audio group
           usermod -a -G audio root
           
-          # Set proper permissions for audio devices
-          chmod 666 /dev/snd/*
-          
           # Verify PulseAudio is running
           sleep 2
           pulseaudio --check || echo "PulseAudio failed to start"
+          
+          # Test ALSA
+          aplay -l || echo "ALSA test failed"
       
       - name: Setup Xvfb virtual display
         run: |
