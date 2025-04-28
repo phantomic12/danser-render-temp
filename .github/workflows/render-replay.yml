@@ -28,7 +28,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libgl1-mesa-dev libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxrender-dev xvfb curl jq firefox
+          sudo apt-get install -y ffmpeg libgl1-mesa-dev libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxrender-dev xvfb curl jq firefox unzip
       
       - name: Setup Xvfb virtual display
         run: |
@@ -50,9 +50,22 @@ jobs:
           # Download and extract
           mkdir -p danser
           cd danser
-          curl -L -o danser.tar.gz "$LATEST_RELEASE_URL"
-          tar -xzf danser.tar.gz
-          chmod +x danser-go
+          
+          # Download file with proper extension
+          if [[ "$LATEST_RELEASE_URL" == *.zip ]]; then
+            curl -L -o danser.zip "$LATEST_RELEASE_URL"
+            unzip danser.zip
+          elif [[ "$LATEST_RELEASE_URL" == *.tar.gz ]]; then
+            curl -L -o danser.tar.gz "$LATEST_RELEASE_URL"
+            tar -xzf danser.tar.gz
+          else
+            echo "Unknown format, downloading as zip and trying both extraction methods"
+            curl -L -o danser.archive "$LATEST_RELEASE_URL"
+            unzip danser.archive || tar -xzf danser.archive || echo "Extraction failed, trying to continue"
+          fi
+          
+          # Find and make executable
+          find . -name "danser-go" -type f -exec chmod +x {} \;
           
           # Create necessary directories
           mkdir -p ~/.config/danser
@@ -96,7 +109,17 @@ jobs:
           cd danser
           # Use software rendering as a fallback if hardware rendering fails
           export LIBGL_ALWAYS_SOFTWARE=1
-          xvfb-run -a ./danser-go -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
+          
+          # Find and use the danser-go binary
+          DANSER_BINARY=$(find . -name "danser-go" -type f | head -1)
+          if [ -z "$DANSER_BINARY" ]; then
+            echo "Error: danser-go binary not found!"
+            ls -la
+            exit 1
+          fi
+          
+          echo "Using danser-go binary at: $DANSER_BINARY"
+          xvfb-run -a "$DANSER_BINARY" -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
           mv ../render.mp4 ~/.local/share/danser/videos/
       
       - name: Upload rendered video as artifact
