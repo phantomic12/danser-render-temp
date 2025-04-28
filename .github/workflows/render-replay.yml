@@ -20,6 +20,14 @@ on:
 jobs:
   render:
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+      env:
+        DISPLAY: :1
+      volumes:
+        - /:/host
+        - /tmp/.X11-unix:/tmp/.X11-unix
+      options: --privileged
     
     steps:
       - name: Checkout code
@@ -27,19 +35,17 @@ jobs:
       
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg libgl1-mesa-dev libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxrender-dev xvfb curl jq firefox unzip
+          apt-get update
+          apt-get install -y ffmpeg libgl1-mesa-dev libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxrender-dev xvfb curl jq firefox unzip python3 python3-pip git
       
       - name: Setup Xvfb virtual display
         run: |
-          export DISPLAY=:1
           Xvfb :1 -screen 0 1920x1080x24 &
           sleep 2
           # Test if xrandr can query the display
           if command -v xrandr &> /dev/null; then
             xrandr --query || echo "xrandr query failed but continuing anyway"
           fi
-          echo "DISPLAY=:1" >> $GITHUB_ENV
       
       - name: Download and setup danser-go
         run: |
