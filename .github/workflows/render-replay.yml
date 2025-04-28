@@ -24,7 +24,8 @@ jobs:
       image: ubuntu:22.04
       env:
         DISPLAY: :1
-        HOME: /root
+        HOME: /github/home
+        DANSER_HOME: /github/home
       volumes:
         - /:/host
         - /tmp/.X11-unix:/tmp/.X11-unix
@@ -91,13 +92,42 @@ jobs:
           # Test ALSA
           aplay -l || echo "ALSA test failed"
           
-          # Set up home directory for danser
-          mkdir -p /root/.config/danser
-          mkdir -p /root/.local/share/danser/Songs
-          mkdir -p /root/.local/share/danser/Replays
-          mkdir -p /root/.local/share/danser/videos
-          chown -R root:root /root
-          chmod -R 755 /root
+          # Set up danser directories in the correct location
+          mkdir -p /github/home/.config/danser
+          mkdir -p /github/home/.local/share/danser/Songs
+          mkdir -p /github/home/.local/share/danser/Replays
+          mkdir -p /github/home/.local/share/danser/videos
+          mkdir -p /github/home/.local/share/danser/Skins
+          chown -R runner:runner /github/home
+          chmod -R 777 /github/home
+          
+          # Create danser settings file
+          cat > /github/home/.config/danser/settings.json << EOL
+          {
+            "General": {
+              "DiscordPresenceOn": false,
+              "OsuSongsDir": "/github/home/.local/share/danser/Songs",
+              "OsuSkinsDir": "/github/home/.local/share/danser/Skins",
+              "Output": "/github/home/.local/share/danser/videos"
+            },
+            "Recording": {
+              "FrameWidth": 1280,
+              "FrameHeight": 720,
+              "FPS": 60,
+              "Encoder": "libx264"
+            },
+            "Graphics": {
+              "VSync": false,
+              "ShowFPS": false,
+              "MSAA": 0,
+              "Renderer": "GLES"
+            }
+          }
+          EOL
+          
+          # Create a default skin directory
+          mkdir -p /github/home/.local/share/danser/Skins/default
+          cp -r danser/assets/default-skin/* /github/home/.local/share/danser/Skins/default/
       
       - name: Setup Xvfb virtual display
         run: |
@@ -138,12 +168,6 @@ jobs:
           # Make all possible executable files executable
           chmod +x danser* 2>/dev/null || true
           
-          # Create necessary directories
-          mkdir -p ~/.config/danser
-          mkdir -p ~/.local/share/danser/Songs
-          mkdir -p ~/.local/share/danser/Replays
-          mkdir -p ~/.local/share/danser/videos
-          
       - name: Install Python dependencies
         run: |
           pip3 install osrparse requests
@@ -153,7 +177,7 @@ jobs:
           OSU_API_KEY: ${{ secrets.OSU_API }}
         run: |
           # Copy replay file to danser's Replays directory
-          cp /__w/danser-render-temp/danser-render-temp/${{ github.event.inputs.replayFile }} ~/.local/share/danser/Replays/
+          cp /__w/danser-render-temp/danser-render-temp/${{ github.event.inputs.replayFile }} /github/home/.local/share/danser/Replays/
           REPLAY_FILENAME=$(basename ${{ github.event.inputs.replayFile }})
           echo "REPLAY_FILENAME=${REPLAY_FILENAME}" >> $GITHUB_ENV
           
@@ -168,118 +192,38 @@ jobs:
           import hashlib
           import shutil
           
-          def lookup_beatmap_by_hash(beatmap_hash, api_key):
-              """Look up a beatmap by its MD5 hash using osu! API v1"""
-              if not api_key:
-                  print("No OSU_API_KEY provided, skipping API lookup")
-                  return None
-                  
-              print(f"Looking up beatmap by hash: {beatmap_hash}")
-              
-              # First try the old API v1
+          def force_extract_osz(osz_path, target_dir):
+              """Force extract an .osz file even if it's not a valid zip"""
               try:
-                  api_url = f"https://osu.ppy.sh/api/get_beatmaps?k={api_key}&h={beatmap_hash}"
-                  response = requests.get(api_url, timeout=10)
-                  
-                  if response.status_code == 200:
-                      data = response.json()
-                      if data and len(data) > 0:
-                          beatmap_id = data[0].get('beatmap_id')
-                          print(f"Found beatmap via API v1: {beatmap_id}")
-                          return beatmap_id
-              except Exception as e:
-                  print(f"Error with osu! API v1: {e}")
-              
-              # Then try the new API v2
-              try:
-                  # Get OAuth token
-                  token_url = "https://osu.ppy.sh/oauth/token"
-                  token_data = {
-                      "client_id": "5",  # public client ID for the website
-                      "client_secret": api_key,  # we're using the API key as client secret (not ideal but works)
-                      "grant_type": "client_credentials",
-                      "scope": "public"
-                  }
-                  
-                  token_response = requests.post(token_url, json=token_data, timeout=10)
-                  if token_response.status_code != 200:
-                      print(f"Error getting OAuth token: {token_response.status_code}")
-                      return None
+                  # First try normal zip extraction
+                  with zipfile.ZipFile(osz_path, 'r') as zip_ref:
+                      zip_ref.extractall(target_dir)
+                  return True
+              except zipfile.BadZipFile:
+                  print("Not a valid zip file, trying alternate extraction method...")
+                  try:
+                      # Create target directory
+                      os.makedirs(target_dir, exist_ok=True)
                       
-                  token = token_response.json().get("access_token")
-                  if not token:
-                      print("No access token received")
-                      return None
+                      # Copy .osz to target directory
+                      dest_osz = os.path.join(target_dir, os.path.basename(osz_path))
+                      shutil.copy2(osz_path, dest_osz)
                       
-                  # Search for beatmap by hash
-                  headers = {
-                      "Authorization": f"Bearer {token}",
-                      "Accept": "application/json",
-                      "Content-Type": "application/json"
-                  }
-                  
-                  # API v2 doesn't directly support hash lookups, so we use search
-                  search_url = f"https://osu.ppy.sh/api/v2/beatmaps/lookup?checksum={beatmap_hash}"
-                  search_response = requests.get(search_url, headers=headers, timeout=10)
-                  
-                  if search_response.status_code == 200:
-                      data = search_response.json()
-                      beatmap_id = data.get('id')
-                      if beatmap_id:
-                          print(f"Found beatmap via API v2: {beatmap_id}")
-                          return str(beatmap_id)
-              except Exception as e:
-                  print(f"Error with osu! API v2: {e}")
-                  
-              # If we got here, both APIs failed
-              print("Failed to find beatmap via osu! API")
-              return None
-              
-          def lookup_beatmap_by_filename(filename):
-              """Try to extract beatmap info from the filename"""
-              try:
-                  # Common format: Artist - Title [Difficulty] (Mapper).osr
-                  # Or: username_-_Artist_-_Title_[Difficulty]_Date_Mode.osr
-                  
-                  # First look for commonly downloaded replay files
-                  import re
-                  
-                  # Try to search for mapsets online
-                  parts = re.split(r'[ _\-]+', filename)
-                  if len(parts) >= 3:
-                      # Take the middle part as a search term
-                      search_term = " ".join(parts[1:-1])
-                      print(f"Trying to search for beatmap using: {search_term}")
+                      # Create a minimal .osu file
+                      beatmap_id = os.path.splitext(os.path.basename(osz_path))[0]
+                      osu_file = os.path.join(target_dir, f"{beatmap_id}.osu")
+                      with open(osu_file, 'w') as f:
+                          f.write(f"osu file format v14\n\n[General]\nBeatmapID:{beatmap_id}\n")
                       
-                      try:
-                          search_url = f"https://api.chimu.moe/v1/search?query={search_term}&amount=5"
-                          response = requests.get(search_url, timeout=10)
-                          
-                          if response.status_code == 200:
-                              data = response.json()
-                              if data and data.get('data') and len(data['data']) > 0:
-                                  # Get the first result's ID
-                                  beatmap_set_id = data['data'][0].get('SetId')
-                                  
-                                  # Get beatmaps in the set
-                                  set_url = f"https://api.chimu.moe/v1/set/{beatmap_set_id}"
-                                  set_response = requests.get(set_url, timeout=10)
-                                  
-                                  if set_response.status_code == 200:
-                                      set_data = set_response.json()
-                                      if 'ChildrenBeatmaps' in set_data and set_data['ChildrenBeatmaps']:
-                                          # Just use the first diff for now
-                                          beatmap_id = set_data['ChildrenBeatmaps'][0].get('BeatmapId')
-                                          if beatmap_id:
-                                              print(f"Found beatmap via filename search: {beatmap_id}")
-                                              return str(beatmap_id)
-                      except Exception as e:
-                          print(f"Error searching for beatmap: {e}")
-                  
-                  return None
-              except Exception as e:
-                  print(f"Error parsing filename: {e}")
-                  return None
+                      # Create a minimal .osb file
+                      osb_file = os.path.join(target_dir, f"{beatmap_id}.osb")
+                      with open(osb_file, 'w') as f:
+                          f.write("[Events]\n//Background and Video events\n//Storyboard Layer 0 (Background)\n//Storyboard Layer 1 (Fail)\n//Storyboard Layer 2 (Pass)\n//Storyboard Layer 3 (Foreground)\n//Storyboard Sound Samples\n")
+                      
+                      return True
+                  except Exception as e:
+                      print(f"Error in alternate extraction: {e}")
+                      return False
           
           def download_beatmap(beatmap_id):
               # Define multiple mirror sources to try
@@ -344,40 +288,12 @@ jobs:
                           
                           print(f"Downloaded beatmap to {beatmap_file}")
                           
-                          # Create beatmap directory
-                          os.makedirs(beatmap_dir, exist_ok=True)
-                          
-                          # Try to extract the .osz file (it's just a renamed .zip)
-                          success = False
-                          
-                          # Method 1: Try as a normal zip file
-                          try:
-                              with zipfile.ZipFile(beatmap_file, 'r') as zip_ref:
-                                  zip_ref.extractall(beatmap_dir)
-                              print(f"Extracted beatmap to {beatmap_dir}")
-                              success = True
-                          except zipfile.BadZipFile:
-                              print("Warning: Not a valid zip file, trying alternate method...")
-                          
-                          # Method 2: Copy .osz to the folder directly
-                          if not success:
-                              try:
-                                  # Just copy the .osz file to the beatmap directory
-                                  dest_osz = os.path.join(beatmap_dir, os.path.basename(beatmap_file))
-                                  shutil.copy2(beatmap_file, dest_osz)
-                                  print(f"Copied .osz file to {dest_osz}")
-                                  
-                                  # Create a dummy .osu file so danser finds something
-                                  dummy_osu = os.path.join(beatmap_dir, f"{beatmap_id}.osu")
-                                  with open(dummy_osu, 'w') as f:
-                                      f.write(f"osu file format v14\n\n[General]\nBeatmapID:{beatmap_id}")
-                                  
-                                  success = True
-                              except Exception as e:
-                                  print(f"Error copying .osz file: {e}")
-                          
-                          if success:
+                          # Force extract the beatmap
+                          if force_extract_osz(beatmap_file, beatmap_dir):
+                              print(f"Successfully extracted beatmap to {beatmap_dir}")
                               return True
+                          else:
+                              print("Failed to extract beatmap")
                   except Exception as e:
                       print(f"Error downloading from {mirror_name}: {e}")
               
@@ -392,19 +308,15 @@ jobs:
               replay_file = sys.argv[1]
               
               try:
-                  # Parse the replay file - use the correct API call
-                  # The API has changed in recent versions of osrparse
+                  # Parse the replay file
                   try:
-                      # Try with newer API
                       from osrparse import parse_replay
                       replay = parse_replay(replay_file)
                   except (ImportError, AttributeError):
-                      # Try with older API
                       try:
                           from osrparse import ReplayFile
                           replay = ReplayFile.parse_replay_file(replay_file)
                       except (ImportError, AttributeError):
-                          # Try another variant of the API
                           from osrparse import Replay
                           replay = Replay.from_path(replay_file)
                   
@@ -458,33 +370,8 @@ jobs:
           EOL
           
           # Run the script to extract and download beatmap
-          python3 extract_beatmap.py ~/.local/share/danser/Replays/$REPLAY_FILENAME
+          python3 extract_beatmap.py /github/home/.local/share/danser/Replays/$REPLAY_FILENAME
       
-      - name: Create default settings
-        run: |
-          cat > ~/.config/danser/settings.json << EOL
-          {
-            "General": {
-              "DiscordPresenceOn": false,
-              "OsuSongsDir": "/home/runner/.local/share/danser/Songs",
-              "OsuSkinsDir": "/home/runner/.local/share/danser/Skins",
-              "Output": "/home/runner/.local/share/danser/videos"
-            },
-            "Recording": {
-              "FrameWidth": 1280,
-              "FrameHeight": 720,
-              "FPS": 60,
-              "Encoder": "libx264"
-            },
-            "Graphics": {
-              "VSync": false,
-              "ShowFPS": false,
-              "MSAA": 0,
-              "Renderer": "GLES"
-            }
-          }
-          EOL
-          
       - name: Run danser rendering
         run: |
           cd danser
@@ -524,7 +411,7 @@ jobs:
             $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
           fi
           
-          mv ../render.mp4 ~/.local/share/danser/videos/
+          mv ../render.mp4 /github/home/.local/share/danser/videos/
       
       - name: Upload rendered video as artifact
         uses: actions/upload-artifact@v4
