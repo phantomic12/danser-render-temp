@@ -24,8 +24,8 @@ jobs:
       image: ubuntu:22.04
       env:
         DISPLAY: :1
-        HOME: /github/home
-        DANSER_HOME: /github/home
+        HOME: /root
+        DANSER_HOME: /root
       volumes:
         - /:/host
         - /tmp/.X11-unix:/tmp/.X11-unix
@@ -69,9 +69,6 @@ jobs:
           }
           EOL
           
-          # Start PulseAudio in system mode with proper flags
-          pulseaudio --system --daemonize=yes --disallow-exit --disallow-module-loading=yes
-          
           # Create dummy ALSA device if none exists
           if [ ! -d /dev/snd ]; then
             mkdir -p /dev/snd
@@ -85,30 +82,23 @@ jobs:
           # Add current user to audio group
           usermod -a -G audio root
           
-          # Verify PulseAudio is running
-          sleep 2
-          pulseaudio --check || echo "PulseAudio failed to start"
-          
-          # Test ALSA
-          aplay -l || echo "ALSA test failed"
-          
           # Set up danser directories in the correct location
-          mkdir -p /github/home/.config/danser
-          mkdir -p /github/home/.local/share/danser/Songs
-          mkdir -p /github/home/.local/share/danser/Replays
-          mkdir -p /github/home/.local/share/danser/videos
-          mkdir -p /github/home/.local/share/danser/Skins
-          chown -R runner:runner /github/home
-          chmod -R 777 /github/home
+          mkdir -p /root/.config/danser
+          mkdir -p /root/.local/share/danser/Songs
+          mkdir -p /root/.local/share/danser/Replays
+          mkdir -p /root/.local/share/danser/videos
+          mkdir -p /root/.local/share/danser/Skins
+          chown -R root:root /root
+          chmod -R 755 /root
           
           # Create danser settings file
-          cat > /github/home/.config/danser/settings.json << EOL
+          cat > /root/.config/danser/settings.json << EOL
           {
             "General": {
               "DiscordPresenceOn": false,
-              "OsuSongsDir": "/github/home/.local/share/danser/Songs",
-              "OsuSkinsDir": "/github/home/.local/share/danser/Skins",
-              "Output": "/github/home/.local/share/danser/videos"
+              "OsuSongsDir": "/root/.local/share/danser/Songs",
+              "OsuSkinsDir": "/root/.local/share/danser/Skins",
+              "Output": "/root/.local/share/danser/videos"
             },
             "Recording": {
               "FrameWidth": 1280,
@@ -126,8 +116,17 @@ jobs:
           EOL
           
           # Create a default skin directory
-          mkdir -p /github/home/.local/share/danser/Skins/default
-          cp -r danser/assets/default-skin/* /github/home/.local/share/danser/Skins/default/
+          mkdir -p /root/.local/share/danser/Skins/default
+          
+          # Start PulseAudio in system mode with proper flags
+          pulseaudio --system --daemonize=yes --disallow-exit --disallow-module-loading=yes
+          
+          # Verify PulseAudio is running
+          sleep 2
+          pulseaudio --check || echo "PulseAudio failed to start"
+          
+          # Test ALSA
+          aplay -l || echo "ALSA test failed"
       
       - name: Setup Xvfb virtual display
         run: |
@@ -168,6 +167,9 @@ jobs:
           # Make all possible executable files executable
           chmod +x danser* 2>/dev/null || true
           
+          # Copy default skin assets
+          cp -r assets/default-skin/* /root/.local/share/danser/Skins/default/
+      
       - name: Install Python dependencies
         run: |
           pip3 install osrparse requests
@@ -177,7 +179,7 @@ jobs:
           OSU_API_KEY: ${{ secrets.OSU_API }}
         run: |
           # Copy replay file to danser's Replays directory
-          cp /__w/danser-render-temp/danser-render-temp/${{ github.event.inputs.replayFile }} /github/home/.local/share/danser/Replays/
+          cp /__w/danser-render-temp/danser-render-temp/${{ github.event.inputs.replayFile }} /root/.local/share/danser/Replays/
           REPLAY_FILENAME=$(basename ${{ github.event.inputs.replayFile }})
           echo "REPLAY_FILENAME=${REPLAY_FILENAME}" >> $GITHUB_ENV
           
@@ -370,7 +372,7 @@ jobs:
           EOL
           
           # Run the script to extract and download beatmap
-          python3 extract_beatmap.py /github/home/.local/share/danser/Replays/$REPLAY_FILENAME
+          python3 extract_beatmap.py /root/.local/share/danser/Replays/$REPLAY_FILENAME
       
       - name: Run danser rendering
         run: |
@@ -411,7 +413,7 @@ jobs:
             $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
           fi
           
-          mv ../render.mp4 /github/home/.local/share/danser/videos/
+          mv ../render.mp4 /root/.local/share/danser/videos/
       
       - name: Upload rendered video as artifact
         uses: actions/upload-artifact@v4
