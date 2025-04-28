@@ -178,10 +178,25 @@ jobs:
               replay_file = sys.argv[1]
               
               try:
-                  # Parse the replay file
-                  replay = osrparse.parse_replay_file(replay_file)
-                  beatmap_hash = replay.beatmap_hash
-                  beatmap_id = replay.beatmap_id
+                  # Parse the replay file - use the correct API call
+                  # The API has changed in recent versions of osrparse
+                  try:
+                      # Try with newer API
+                      from osrparse import parse_replay
+                      replay = parse_replay(replay_file)
+                  except (ImportError, AttributeError):
+                      # Try with older API
+                      try:
+                          from osrparse import ReplayFile
+                          replay = ReplayFile.parse_replay_file(replay_file)
+                      except (ImportError, AttributeError):
+                          # Try another variant of the API
+                          from osrparse import Replay
+                          replay = Replay.from_path(replay_file)
+                  
+                  # Extract beatmap info
+                  beatmap_hash = getattr(replay, 'beatmap_hash', None)
+                  beatmap_id = getattr(replay, 'beatmap_id', None)
                   
                   print(f"Parsed replay file: {replay_file}")
                   print(f"Beatmap Hash: {beatmap_hash}")
@@ -189,8 +204,10 @@ jobs:
                   
                   # Set environment variables for GitHub Actions
                   with open(os.environ['GITHUB_ENV'], 'a') as env_file:
-                      env_file.write(f"BEATMAP_ID={beatmap_id}\n")
-                      env_file.write(f"BEATMAP_HASH={beatmap_hash}\n")
+                      if beatmap_id:
+                          env_file.write(f"BEATMAP_ID={beatmap_id}\n")
+                      if beatmap_hash:
+                          env_file.write(f"BEATMAP_HASH={beatmap_hash}\n")
                   
                   # Download the beatmap
                   if beatmap_id:
@@ -208,6 +225,9 @@ jobs:
                       
               except Exception as e:
                   print(f"Error parsing replay file: {e}")
+                  print("Detailed exception information:")
+                  import traceback
+                  traceback.print_exc()
                   return 1
               
           if __name__ == "__main__":
