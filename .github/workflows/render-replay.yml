@@ -185,7 +185,7 @@ jobs:
         
       - name: Upload video to Discord (File)
         if: github.event.inputs.uploadDestination == 'discord' && env.FILE_SIZE_MB <= 25
-        uses: tsickert/discord-webhook@v5.5.0
+        uses: tsickert/discord-webhook@v7.0.0
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           content: "Replay rendering complete! Original message: https://discord.com/channels/${{ secrets.DISCORD_SERVER_ID }}/${{ github.event.inputs.discordChannelId }}/${{ github.event.inputs.discordMessageId }}"
@@ -194,7 +194,7 @@ jobs:
       
       - name: Send YouTube link to Discord
         if: github.event.inputs.uploadDestination != 'discord' && env.YOUTUBE_URL != ''
-        uses: tsickert/discord-webhook@v5.5.0
+        uses: tsickert/discord-webhook@v7.0.0
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           content: "Replay rendering complete! Video uploaded to YouTube: ${{ env.YOUTUBE_URL }} \nOriginal message: https://discord.com/channels/${{ secrets.DISCORD_SERVER_ID }}/${{ github.event.inputs.discordChannelId }}/${{ github.event.inputs.discordMessageId }}" 
