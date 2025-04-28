@@ -447,15 +447,18 @@ jobs:
           
           echo "Using danser binary at: $DANSER_BINARY"
           
+          # Make sure DISPLAY is set
+          export DISPLAY=:1
+          
           # First try with downloaded beatmap
           if [ -n "$BEATMAP_ID" ]; then
             echo "Rendering with beatmap ID: $BEATMAP_ID"
-            xvfb-run -a $DANSER_BINARY -replay="$REPLAY_FILENAME" -beatmap="$BEATMAP_ID" -quickstart -record -out="../render.mp4" || \
-            xvfb-run -a $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
+            $DANSER_BINARY -replay="$REPLAY_FILENAME" -beatmap="$BEATMAP_ID" -quickstart -record -out="../render.mp4" || \
+            $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
           else
             # Fallback to default quickstart without beatmap ID
             echo "Rendering with default quickstart"
-            xvfb-run -a $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
+            $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
           fi
           
           mv ../render.mp4 ~/.local/share/danser/videos/
