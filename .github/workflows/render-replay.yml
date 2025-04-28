@@ -64,8 +64,12 @@ jobs:
             unzip danser.archive || tar -xzf danser.archive || echo "Extraction failed, trying to continue"
           fi
           
-          # Find and make executable
-          find . -name "danser-go" -type f -exec chmod +x {} \;
+          # List files to debug
+          echo "Extracted files:"
+          ls -la
+          
+          # Make all possible executable files executable
+          chmod +x danser* 2>/dev/null || true
           
           # Create necessary directories
           mkdir -p ~/.config/danser
@@ -73,6 +77,146 @@ jobs:
           mkdir -p ~/.local/share/danser/Replays
           mkdir -p ~/.local/share/danser/videos
           
+      - name: Setup Python for OSR parsing
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          
+      - name: Install OSR parsing dependencies
+        run: |
+          pip install osrparse requests
+
+      - name: Copy replay file and extract beatmap info
+        run: |
+          cp ${{ github.workspace }}/${{ github.event.inputs.replayFile }} ~/.local/share/danser/Replays/
+          REPLAY_FILENAME=$(basename ${{ github.event.inputs.replayFile }})
+          echo "REPLAY_FILENAME=${REPLAY_FILENAME}" >> $GITHUB_ENV
+          
+          # Create Python script to extract beatmap_id and download it
+          cat > extract_beatmap.py << 'EOL'
+          import osrparse
+          import requests
+          import os
+          import sys
+          import zipfile
+          import time
+          
+          def download_beatmap(beatmap_id):
+              # Use chimu.moe as the primary source
+              beatmap_url = f"https://chimu.moe/d/{beatmap_id}"
+              alt_url = f"https://api.chimu.moe/v1/download/{beatmap_id}?n=1"
+              
+              try:
+                  print(f"Downloading beatmap {beatmap_id} from {alt_url}")
+                  response = requests.get(alt_url, stream=True, timeout=30)
+                  
+                  if response.status_code == 200:
+                      # Create Songs directory if it doesn't exist
+                      songs_dir = os.path.expanduser("~/.local/share/danser/Songs")
+                      os.makedirs(songs_dir, exist_ok=True)
+                      
+                      # Save the beatmap
+                      beatmap_file = os.path.join(songs_dir, f"{beatmap_id}.osz")
+                      with open(beatmap_file, 'wb') as f:
+                          for chunk in response.iter_content(chunk_size=8192):
+                              f.write(chunk)
+                      
+                      print(f"Downloaded beatmap to {beatmap_file}")
+                      
+                      # Extract the beatmap
+                      beatmap_dir = os.path.join(songs_dir, str(beatmap_id))
+                      os.makedirs(beatmap_dir, exist_ok=True)
+                      
+                      try:
+                          with zipfile.ZipFile(beatmap_file, 'r') as zip_ref:
+                              zip_ref.extractall(beatmap_dir)
+                          print(f"Extracted beatmap to {beatmap_dir}")
+                          return True
+                      except zipfile.BadZipFile:
+                          print("Error: Downloaded file is not a valid beatmap archive")
+                          return False
+                  else:
+                      print(f"Error: Failed to download beatmap, status code: {response.status_code}")
+                      return False
+              except Exception as e:
+                  print(f"Error downloading beatmap: {e}")
+                  
+                  # Try alternative source (kitsu.moe)
+                  try:
+                      kitsu_url = f"https://kitsu.moe/api/d/{beatmap_id}"
+                      print(f"Trying alternative source: {kitsu_url}")
+                      response = requests.get(kitsu_url, stream=True, timeout=30)
+                      
+                      if response.status_code == 200:
+                          # Save the beatmap
+                          songs_dir = os.path.expanduser("~/.local/share/danser/Songs")
+                          beatmap_file = os.path.join(songs_dir, f"{beatmap_id}.osz")
+                          with open(beatmap_file, 'wb') as f:
+                              for chunk in response.iter_content(chunk_size=8192):
+                                  f.write(chunk)
+                          
+                          # Extract the beatmap
+                          beatmap_dir = os.path.join(songs_dir, str(beatmap_id))
+                          os.makedirs(beatmap_dir, exist_ok=True)
+                          
+                          with zipfile.ZipFile(beatmap_file, 'r') as zip_ref:
+                              zip_ref.extractall(beatmap_dir)
+                          print(f"Extracted beatmap from alternative source to {beatmap_dir}")
+                          return True
+                      else:
+                          print(f"Error: Failed to download from alternative source, status code: {response.status_code}")
+                          return False
+                  except Exception as alt_e:
+                      print(f"Error downloading from alternative source: {alt_e}")
+                      return False
+          
+          def main():
+              if len(sys.argv) < 2:
+                  print("Usage: python extract_beatmap.py <replay_file>")
+                  return 1
+              
+              replay_file = sys.argv[1]
+              
+              try:
+                  # Parse the replay file
+                  replay = osrparse.parse_replay_file(replay_file)
+                  beatmap_hash = replay.beatmap_hash
+                  beatmap_id = replay.beatmap_id
+                  
+                  print(f"Parsed replay file: {replay_file}")
+                  print(f"Beatmap Hash: {beatmap_hash}")
+                  print(f"Beatmap ID: {beatmap_id}")
+                  
+                  # Set environment variables for GitHub Actions
+                  with open(os.environ['GITHUB_ENV'], 'a') as env_file:
+                      env_file.write(f"BEATMAP_ID={beatmap_id}\n")
+                      env_file.write(f"BEATMAP_HASH={beatmap_hash}\n")
+                  
+                  # Download the beatmap
+                  if beatmap_id:
+                      for attempt in range(3):  # Try up to 3 times
+                          if download_beatmap(beatmap_id):
+                              return 0
+                          print(f"Retrying download ({attempt+1}/3)...")
+                          time.sleep(2)  # Wait before retrying
+                      
+                      print("Failed to download beatmap after multiple attempts")
+                      return 1
+                  else:
+                      print("Error: Could not determine beatmap ID from replay file")
+                      return 1
+                      
+              except Exception as e:
+                  print(f"Error parsing replay file: {e}")
+                  return 1
+              
+          if __name__ == "__main__":
+              sys.exit(main())
+          EOL
+          
+          # Run the script to extract and download beatmap
+          python extract_beatmap.py ~/.local/share/danser/Replays/$REPLAY_FILENAME
+      
       - name: Create default settings
         run: |
           cat > ~/.config/danser/settings.json << EOL
@@ -98,28 +242,42 @@ jobs:
           }
           EOL
           
-      - name: Copy replay file
-        run: |
-          cp ${{ github.workspace }}/${{ github.event.inputs.replayFile }} ~/.local/share/danser/Replays/
-          REPLAY_FILENAME=$(basename ${{ github.event.inputs.replayFile }})
-          echo "REPLAY_FILENAME=${REPLAY_FILENAME}" >> $GITHUB_ENV
-      
       - name: Run danser rendering
         run: |
           cd danser
           # Use software rendering as a fallback if hardware rendering fails
           export LIBGL_ALWAYS_SOFTWARE=1
           
-          # Find and use the danser-go binary
-          DANSER_BINARY=$(find . -name "danser-go" -type f | head -1)
+          # Check for available binaries
+          echo "Looking for danser binary..."
+          if [ -f "./danser" ]; then
+            DANSER_BINARY="./danser"
+          elif [ -f "./danser-cli" ]; then
+            DANSER_BINARY="./danser-cli"
+          else
+            # As a last resort, find any executable
+            DANSER_BINARY=$(find . -type f -executable | grep -E 'danser|danser-cli|danser-go' | head -1)
+          fi
+          
           if [ -z "$DANSER_BINARY" ]; then
-            echo "Error: danser-go binary not found!"
+            echo "Error: No suitable danser binary found!"
             ls -la
             exit 1
           fi
           
-          echo "Using danser-go binary at: $DANSER_BINARY"
-          xvfb-run -a "$DANSER_BINARY" -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
+          echo "Using danser binary at: $DANSER_BINARY"
+          
+          # First try with downloaded beatmap
+          if [ -n "$BEATMAP_ID" ]; then
+            echo "Rendering with beatmap ID: $BEATMAP_ID"
+            xvfb-run -a $DANSER_BINARY -replay="$REPLAY_FILENAME" -beatmap="$BEATMAP_ID" -quickstart -record -out="../render.mp4" || \
+            xvfb-run -a $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
+          else
+            # Fallback to default quickstart without beatmap ID
+            echo "Rendering with default quickstart"
+            xvfb-run -a $DANSER_BINARY -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
+          fi
+          
           mv ../render.mp4 ~/.local/share/danser/videos/
       
       - name: Upload rendered video as artifact
@@ -167,9 +325,16 @@ jobs:
       - name: Create metadata for YouTube
         if: github.event.inputs.uploadDestination != 'discord'
         run: |
+          # Add beatmap info to the title if available
+          if [ -n "$BEATMAP_ID" ]; then
+            TITLE="osu! replay: $REPLAY_FILENAME (Beatmap ID: $BEATMAP_ID)"
+          else
+            TITLE="osu! replay: $REPLAY_FILENAME"
+          fi
+          
           cat > youtube_metadata.json << EOL
           {
-            "title": "osu! replay: ${{ env.REPLAY_FILENAME }}",
+            "title": "$TITLE",
             "description": "Rendered with danser-go. Original Discord message: https://discord.com/channels/${{ secrets.DISCORD_SERVER_ID }}/${{ github.event.inputs.discordChannelId }}/${{ github.event.inputs.discordMessageId }}",
             "tags": ["osu", "replay", "danser", "gameplay"],
             "privacyStatus": "unlisted"
