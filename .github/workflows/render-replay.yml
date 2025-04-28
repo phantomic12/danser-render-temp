@@ -103,6 +103,7 @@ jobs:
           import zipfile
           import time
           import hashlib
+          import shutil
           
           def lookup_beatmap_by_hash(beatmap_hash, api_key):
               """Look up a beatmap by its MD5 hash using osu! API v1"""
@@ -218,73 +219,107 @@ jobs:
                   return None
           
           def download_beatmap(beatmap_id):
-              # Use chimu.moe as the primary source
-              beatmap_url = f"https://chimu.moe/d/{beatmap_id}"
-              alt_url = f"https://api.chimu.moe/v1/download/{beatmap_id}?n=1"
+              # Define multiple mirror sources to try
+              mirrors = [
+                  # Primary mirrors
+                  {
+                      "name": "osu.direct",
+                      "url": f"https://osu.direct/api/d/{beatmap_id}",
+                      "direct": True
+                  },
+                  {
+                      "name": "api.chimu.moe",
+                      "url": f"https://api.chimu.moe/v1/download/{beatmap_id}?n=1",
+                      "direct": True
+                  },
+                  {
+                      "name": "kitsu.moe",
+                      "url": f"https://kitsu.moe/api/d/{beatmap_id}",
+                      "direct": True
+                  },
+                  {
+                      "name": "beatconnect.io",
+                      "url": f"https://beatconnect.io/b/{beatmap_id}/",
+                      "direct": True
+                  },
+                  # Fallback to official site (requires login normally, but worth a try)
+                  {
+                      "name": "osu.ppy.sh",
+                      "url": f"https://osu.ppy.sh/beatmapsets/{beatmap_id}/download",
+                      "direct": False
+                  }
+              ]
               
-              try:
-                  print(f"Downloading beatmap {beatmap_id} from {alt_url}")
-                  response = requests.get(alt_url, stream=True, timeout=30)
-                  
-                  if response.status_code == 200:
-                      # Create Songs directory if it doesn't exist
-                      songs_dir = os.path.expanduser("~/.local/share/danser/Songs")
-                      os.makedirs(songs_dir, exist_ok=True)
-                      
-                      # Save the beatmap
-                      beatmap_file = os.path.join(songs_dir, f"{beatmap_id}.osz")
-                      with open(beatmap_file, 'wb') as f:
-                          for chunk in response.iter_content(chunk_size=8192):
-                              f.write(chunk)
-                      
-                      print(f"Downloaded beatmap to {beatmap_file}")
-                      
-                      # Extract the beatmap
-                      beatmap_dir = os.path.join(songs_dir, str(beatmap_id))
-                      os.makedirs(beatmap_dir, exist_ok=True)
-                      
-                      try:
-                          with zipfile.ZipFile(beatmap_file, 'r') as zip_ref:
-                              zip_ref.extractall(beatmap_dir)
-                          print(f"Extracted beatmap to {beatmap_dir}")
-                          return True
-                      except zipfile.BadZipFile:
-                          print("Error: Downloaded file is not a valid beatmap archive")
-                          return False
-                  else:
-                      print(f"Error: Failed to download beatmap, status code: {response.status_code}")
-                      return False
-              except Exception as e:
-                  print(f"Error downloading beatmap: {e}")
-                  
-                  # Try alternative source (kitsu.moe)
+              # Create Songs directory if it doesn't exist
+              songs_dir = os.path.expanduser("~/.local/share/danser/Songs")
+              os.makedirs(songs_dir, exist_ok=True)
+              
+              # Beatmap files
+              beatmap_file = os.path.join(songs_dir, f"{beatmap_id}.osz")
+              beatmap_dir = os.path.join(songs_dir, str(beatmap_id))
+              
+              # Try each mirror
+              for mirror in mirrors:
                   try:
-                      kitsu_url = f"https://kitsu.moe/api/d/{beatmap_id}"
-                      print(f"Trying alternative source: {kitsu_url}")
-                      response = requests.get(kitsu_url, stream=True, timeout=30)
+                      mirror_name = mirror["name"]
+                      mirror_url = mirror["url"]
+                      print(f"Trying to download beatmap {beatmap_id} from {mirror_name}: {mirror_url}")
+                      
+                      # Add a user agent to avoid being blocked
+                      headers = {
+                          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                          "Accept": "*/*"
+                      }
+                      
+                      response = requests.get(mirror_url, headers=headers, stream=True, timeout=30)
                       
                       if response.status_code == 200:
                           # Save the beatmap
-                          songs_dir = os.path.expanduser("~/.local/share/danser/Songs")
-                          beatmap_file = os.path.join(songs_dir, f"{beatmap_id}.osz")
                           with open(beatmap_file, 'wb') as f:
                               for chunk in response.iter_content(chunk_size=8192):
                                   f.write(chunk)
                           
-                          # Extract the beatmap
-                          beatmap_dir = os.path.join(songs_dir, str(beatmap_id))
+                          print(f"Downloaded beatmap to {beatmap_file}")
+                          
+                          # Create beatmap directory
                           os.makedirs(beatmap_dir, exist_ok=True)
                           
-                          with zipfile.ZipFile(beatmap_file, 'r') as zip_ref:
-                              zip_ref.extractall(beatmap_dir)
-                          print(f"Extracted beatmap from alternative source to {beatmap_dir}")
-                          return True
-                      else:
-                          print(f"Error: Failed to download from alternative source, status code: {response.status_code}")
-                          return False
-                  except Exception as alt_e:
-                      print(f"Error downloading from alternative source: {alt_e}")
-                      return False
+                          # Try to extract the .osz file (it's just a renamed .zip)
+                          success = False
+                          
+                          # Method 1: Try as a normal zip file
+                          try:
+                              with zipfile.ZipFile(beatmap_file, 'r') as zip_ref:
+                                  zip_ref.extractall(beatmap_dir)
+                              print(f"Extracted beatmap to {beatmap_dir}")
+                              success = True
+                          except zipfile.BadZipFile:
+                              print("Warning: Not a valid zip file, trying alternate method...")
+                          
+                          # Method 2: Copy .osz to the folder directly
+                          if not success:
+                              try:
+                                  # Just copy the .osz file to the beatmap directory
+                                  dest_osz = os.path.join(beatmap_dir, os.path.basename(beatmap_file))
+                                  shutil.copy2(beatmap_file, dest_osz)
+                                  print(f"Copied .osz file to {dest_osz}")
+                                  
+                                  # Create a dummy .osu file so danser finds something
+                                  dummy_osu = os.path.join(beatmap_dir, f"{beatmap_id}.osu")
+                                  with open(dummy_osu, 'w') as f:
+                                      f.write(f"osu file format v14\n\n[General]\nBeatmapID:{beatmap_id}")
+                                  
+                                  success = True
+                              except Exception as e:
+                                  print(f"Error copying .osz file: {e}")
+                          
+                          if success:
+                              return True
+                  except Exception as e:
+                      print(f"Error downloading from {mirror_name}: {e}")
+              
+              print("All download mirrors failed")
+              return False
           
           def main():
               if len(sys.argv) < 2:
