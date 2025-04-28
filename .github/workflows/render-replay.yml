@@ -38,8 +38,29 @@ jobs:
           apt-get update
           apt-get install -y ffmpeg libgl1-mesa-dev libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxrender-dev xvfb curl jq firefox unzip python3 python3-pip git libgtk-3-0 libgtk-3-dev alsa-utils pulseaudio libasound2-dev x11-xserver-utils
           
-          # Start PulseAudio in system mode
-          pulseaudio --system --daemonize
+          # Configure PulseAudio for system-wide access
+          mkdir -p /etc/pulse
+          cat > /etc/pulse/system.pa << EOL
+          load-module module-native-protocol-unix auth-anonymous=1
+          load-module module-alsa-sink
+          load-module module-alsa-source
+          load-module module-null-sink
+          load-module module-pipe-sink
+          load-module module-pipe-source
+          EOL
+          
+          # Start PulseAudio in system mode with proper permissions
+          pulseaudio --system --daemonize=yes --disallow-exit --disallow-module-loading=no
+          
+          # Add current user to audio group
+          usermod -a -G audio root
+          
+          # Set proper permissions for audio devices
+          chmod 666 /dev/snd/*
+          
+          # Verify PulseAudio is running
+          sleep 2
+          pulseaudio --check || echo "PulseAudio failed to start"
       
       - name: Setup Xvfb virtual display
         run: |
