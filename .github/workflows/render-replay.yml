@@ -189,6 +189,43 @@ jobs:
           import hashlib
           import shutil
           
+          def lookup_beatmap_by_hash(beatmap_hash, api_key):
+              """Look up beatmap ID using the osu! API"""
+              if not api_key:
+                  print("No osu! API key provided")
+                  return None
+              
+              try:
+                  url = f"https://osu.ppy.sh/api/get_beatmaps?k={api_key}&h={beatmap_hash}"
+                  response = requests.get(url, timeout=10)
+                  if response.status_code == 200:
+                      data = response.json()
+                      if data and len(data) > 0:
+                          return data[0].get('beatmap_id')
+              except Exception as e:
+                  print(f"Error looking up beatmap by hash: {e}")
+              return None
+          
+          def lookup_beatmap_by_filename(filename):
+              """Extract beatmap ID from filename if possible"""
+              try:
+                  # Common filename patterns
+                  patterns = [
+                      r'(\d+)\.osr$',  # Just the ID
+                      r'(\d+)_',       # ID at start
+                      r'_(\d+)_',      # ID in middle
+                      r'_(\d+)\.osr$'  # ID at end
+                  ]
+                  
+                  import re
+                  for pattern in patterns:
+                      match = re.search(pattern, filename)
+                      if match:
+                          return match.group(1)
+              except Exception as e:
+                  print(f"Error extracting beatmap ID from filename: {e}")
+              return None
+          
           def force_extract_osz(osz_path, target_dir):
               """Force extract an .osz file even if it's not a valid zip"""
               try:
@@ -513,8 +550,3 @@ jobs:
           file-path: ${{ env.VIDEO_PATH }}
       
       - name: Send YouTube link to Discord
-        if: github.event.inputs.uploadDestination != 'discord' && env.YOUTUBE_URL != ''
-        uses: tsickert/discord-webhook@v7.0.0
-        with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          content: "Replay rendering complete! Video uploaded to YouTube: ${{ env.YOUTUBE_URL }} \nOriginal message: https://discord.com/channels/${{ secrets.DISCORD_SERVER_ID }}/${{ github.event.inputs.discordChannelId }}/${{ github.event.inputs.discordMessageId }}" 
