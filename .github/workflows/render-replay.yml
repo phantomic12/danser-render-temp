@@ -1,0 +1,200 @@
+name: Render osu! Replay
+
+on:
+  workflow_dispatch:
+    inputs:
+      replayFile:
+        description: 'Path to the replay file in the repository'
+        required: true
+      discordMessageId:
+        description: 'Discord message ID that triggered the render'
+        required: true
+      discordChannelId:
+        description: 'Discord channel ID where to post the result'
+        required: true
+      uploadDestination:
+        description: 'Where to upload the video (discord, youtube, or both)'
+        required: true
+        default: 'youtube'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libgl1-mesa-dev libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxrender-dev xvfb curl jq firefox
+      
+      - name: Setup Xvfb virtual display
+        run: |
+          export DISPLAY=:1
+          Xvfb :1 -screen 0 1920x1080x24 &
+          sleep 2
+          # Test if xrandr can query the display
+          if command -v xrandr &> /dev/null; then
+            xrandr --query || echo "xrandr query failed but continuing anyway"
+          fi
+          echo "DISPLAY=:1" >> $GITHUB_ENV
+      
+      - name: Download and setup danser-go
+        run: |
+          # Get latest release URL
+          LATEST_RELEASE_URL=$(curl -s https://api.github.com/repos/Wieku/danser-go/releases/latest | jq -r '.assets[] | select(.name | contains("linux")) | .browser_download_url')
+          echo "Downloading from: $LATEST_RELEASE_URL"
+          
+          # Download and extract
+          mkdir -p danser
+          cd danser
+          curl -L -o danser.tar.gz "$LATEST_RELEASE_URL"
+          tar -xzf danser.tar.gz
+          chmod +x danser-go
+          
+          # Create necessary directories
+          mkdir -p ~/.config/danser
+          mkdir -p ~/.local/share/danser/Songs
+          mkdir -p ~/.local/share/danser/Replays
+          mkdir -p ~/.local/share/danser/videos
+          
+      - name: Create default settings
+        run: |
+          cat > ~/.config/danser/settings.json << EOL
+          {
+            "General": {
+              "DiscordPresenceOn": false,
+              "OsuSongsDir": "/home/runner/.local/share/danser/Songs",
+              "OsuSkinsDir": "/home/runner/.local/share/danser/Skins",
+              "Output": "/home/runner/.local/share/danser/videos"
+            },
+            "Recording": {
+              "FrameWidth": 1280,
+              "FrameHeight": 720,
+              "FPS": 60,
+              "Encoder": "libx264"
+            },
+            "Graphics": {
+              "VSync": false,
+              "ShowFPS": false,
+              "MSAA": 0,
+              "Renderer": "GLES"
+            }
+          }
+          EOL
+          
+      - name: Copy replay file
+        run: |
+          cp ${{ github.workspace }}/${{ github.event.inputs.replayFile }} ~/.local/share/danser/Replays/
+          REPLAY_FILENAME=$(basename ${{ github.event.inputs.replayFile }})
+          echo "REPLAY_FILENAME=${REPLAY_FILENAME}" >> $GITHUB_ENV
+      
+      - name: Run danser rendering
+        run: |
+          cd danser
+          # Use software rendering as a fallback if hardware rendering fails
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a ./danser-go -replay="$REPLAY_FILENAME" -quickstart -record -out="../render.mp4"
+          mv ../render.mp4 ~/.local/share/danser/videos/
+      
+      - name: Upload rendered video as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: rendered-replay
+          path: ~/.local/share/danser/videos/*.mp4
+      
+      - name: Find video file
+        id: find-video
+        run: |
+          VIDEO_PATH=$(find ~/.local/share/danser/videos -name "*.mp4" -type f -print -quit)
+          echo "VIDEO_PATH=${VIDEO_PATH}" >> $GITHUB_ENV
+          echo "VIDEO_FILENAME=$(basename ${VIDEO_PATH})" >> $GITHUB_ENV
+          
+          # Get file size for decision making
+          FILE_SIZE_BYTES=$(stat -c%s "$VIDEO_PATH")
+          FILE_SIZE_MB=$((FILE_SIZE_BYTES / 1024 / 1024))
+          echo "FILE_SIZE_MB=${FILE_SIZE_MB}" >> $GITHUB_ENV
+          echo "Video file size: ${FILE_SIZE_MB}MB"
+
+      - name: Checkout Firefox profile repository
+        if: github.event.inputs.uploadDestination != 'discord'
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ secrets.FIREFOX_PROFILE_REPO }}
+          token: ${{ secrets.FIREFOX_PROFILE_TOKEN }}
+          path: firefox-profile
+          
+      - name: Setup Python for Selenium
+        if: github.event.inputs.uploadDestination != 'discord'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install youtube-uploader-selenium
+        if: github.event.inputs.uploadDestination != 'discord'
+        run: |
+          pip install youtube-uploader-selenium
+          pip install selenium
+          wget https://github.com/mozilla/geckodriver/releases/download/v0.32.0/geckodriver-v0.32.0-linux64.tar.gz
+          tar -xzf geckodriver-v0.32.0-linux64.tar.gz
+          sudo mv geckodriver /usr/local/bin/
+      
+      - name: Create metadata for YouTube
+        if: github.event.inputs.uploadDestination != 'discord'
+        run: |
+          cat > youtube_metadata.json << EOL
+          {
+            "title": "osu! replay: ${{ env.REPLAY_FILENAME }}",
+            "description": "Rendered with danser-go. Original Discord message: https://discord.com/channels/${{ secrets.DISCORD_SERVER_ID }}/${{ github.event.inputs.discordChannelId }}/${{ github.event.inputs.discordMessageId }}",
+            "tags": ["osu", "replay", "danser", "gameplay"],
+            "privacyStatus": "unlisted"
+          }
+          EOL
+          
+      - name: Upload to YouTube using Selenium
+        if: github.event.inputs.uploadDestination != 'discord'
+        id: selenium-upload
+        run: |
+          # Ensure Xvfb is running for Selenium
+          export DISPLAY=:1
+          python - << EOF
+          from youtube_uploader_selenium import YouTubeUploader
+          import json
+          import os
+          
+          video_path = os.environ['VIDEO_PATH']
+          metadata_path = 'youtube_metadata.json'
+          
+          uploader = YouTubeUploader(video_path, metadata_path, 
+                                     profile_path='firefox-profile/firefox_profile',
+                                     browser_preference='firefox')
+                                     
+          was_upload_successful, video_id = uploader.upload()
+          
+          if was_upload_successful:
+              print("::set-output name=video_id::{}".format(video_id))
+              print("YOUTUBE_VIDEO_ID={}".format(video_id), file=open(os.environ['GITHUB_ENV'], 'a'))
+              print("YOUTUBE_URL=https://youtu.be/{}".format(video_id), file=open(os.environ['GITHUB_ENV'], 'a'))
+              print("Video successfully uploaded to YouTube with ID: {}".format(video_id))
+          else:
+              print("::error::Failed to upload video to YouTube")
+              exit(1)
+          EOF
+        
+      - name: Upload video to Discord (File)
+        if: github.event.inputs.uploadDestination == 'discord' && env.FILE_SIZE_MB <= 25
+        uses: tsickert/discord-webhook@v5.3.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          content: "Replay rendering complete! Original message: https://discord.com/channels/${{ secrets.DISCORD_SERVER_ID }}/${{ github.event.inputs.discordChannelId }}/${{ github.event.inputs.discordMessageId }}"
+          filename: ${{ env.VIDEO_FILENAME }}
+          file-path: ${{ env.VIDEO_PATH }}
+      
+      - name: Send YouTube link to Discord
+        if: github.event.inputs.uploadDestination != 'discord' && env.YOUTUBE_URL != ''
+        uses: tsickert/discord-webhook@v5.3.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          content: "Replay rendering complete! Video uploaded to YouTube: ${{ env.YOUTUBE_URL }} \nOriginal message: https://discord.com/channels/${{ secrets.DISCORD_SERVER_ID }}/${{ github.event.inputs.discordChannelId }}/${{ github.event.inputs.discordMessageId }}" 
