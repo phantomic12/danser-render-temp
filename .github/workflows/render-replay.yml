@@ -32,8 +32,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /github/workspace
       
       - name: Install system dependencies
         run: |
@@ -99,7 +97,7 @@ jobs:
           OSU_API_KEY: ${{ secrets.OSU_API }}
         run: |
           # Copy replay file to danser's Replays directory
-          cp /github/workspace/${{ github.event.inputs.replayFile }} ~/.local/share/danser/Replays/
+          cp /__w/danser-render-temp/danser-render-temp/${{ github.event.inputs.replayFile }} ~/.local/share/danser/Replays/
           REPLAY_FILENAME=$(basename ${{ github.event.inputs.replayFile }})
           echo "REPLAY_FILENAME=${REPLAY_FILENAME}" >> $GITHUB_ENV
           
