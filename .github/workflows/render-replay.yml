@@ -100,7 +100,7 @@ jobs:
           mv ../render.mp4 ~/.local/share/danser/videos/
       
       - name: Upload rendered video as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rendered-replay
           path: ~/.local/share/danser/videos/*.mp4
